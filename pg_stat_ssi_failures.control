@@ -1,6 +1,5 @@
 # pg_stat_ssi_failures extension
 comment = 'Monitor SSI failures in a view'
 default_version = '0.1'
-requires = 'pg_stat_ssi_failures'
 module_pathname = '$libdir/pg_stat_ssi_failures'
 relocatable = true
