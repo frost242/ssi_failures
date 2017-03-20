@@ -1,8 +1,7 @@
+#include <unistd.h>
 
 #include "postgres.h"
 
-#include "access/hash.h"
-#include "executor/executor.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -17,12 +16,14 @@
 
 PG_MODULE_MAGIC;
 
-/* TODO: see which version are supported */
+
 #if PG_VERSION_NUM >= 90300
-#define PGSK_DUMP_FILE		"pg_stat/pg_stat_kcache.stat"
+#define SSIFAIL_DUMP_FILE       "pg_stat/ssi_failures.stat"
 #else
-#define PGSK_DUMP_FILE		"global/pg_stat_kcache.stat"
+#define SSIFAIL_DUMP_FILE       "global/ssi_failures.stat"
 #endif
+
+static const uint32 SSIFAIL_FILE_HEADER = 0x12435687;
 
 typedef struct ssifailsStruct
 {
@@ -81,6 +82,9 @@ static void
 serialization_fail_count_shmem_startup(void)
 {
     bool       found;
+    FILE       *file;
+    uint32     header;
+    int64      temp_counter;
 
     if (prev_shmem_startup_hook)
         prev_shmem_startup_hook();
@@ -107,6 +111,48 @@ serialization_fail_count_shmem_startup(void)
 
     if (!IsUnderPostmaster)
         on_shmem_exit(ssifails_shmem_shutdown, (Datum) 0);
+
+    /* Load stat file, don't care about locking */
+    file = AllocateFile(SSIFAIL_DUMP_FILE, PG_BINARY_R);
+    if (file == NULL)
+    {
+        if (errno == ENOENT)
+            return;            /* ignore not-found error */
+        goto error;
+    }
+
+    /* check if header is valid */
+    if (fread(&header, sizeof(uint32), 1, file) != 1 ||
+            header != SSIFAIL_FILE_HEADER)
+        goto error;
+
+    if (fread(&temp_counter, sizeof(int64), 1, file) != 1)
+        goto error;
+
+    ssifails->occured_serialization_failures = temp_counter;
+
+    FreeFile(file);
+
+    /* Remove the file so it's not included in backups/replication slaves, etc.
+     * A new file will be written on next shutdown.
+     */
+    unlink(SSIFAIL_DUMP_FILE);
+
+    return;
+
+error:
+    /* Don't issue anything else than FATAL, this prevents PostgreSQL to
+     * start properly
+     */
+    ereport(LOG,
+            (errcode_for_file_access(),
+	     errmsg("could not read file \"%s\": %m",
+                    SSIFAIL_DUMP_FILE)));
+    if (file)
+        FreeFile(file);
+
+    /* delete bogus file, don't care of errors in this case */
+    unlink(SSIFAIL_DUMP_FILE);
 }
 
 /*
@@ -116,12 +162,44 @@ serialization_fail_count_shmem_startup(void)
 static void
 ssifails_shmem_shutdown(int code, Datum arg)
 {
+    FILE *file;
+
     /* Don't try to dump during a crash. */
     if (code)
         return;
 
     if (!ssifails)
         return;
+
+    file = AllocateFile(SSIFAIL_DUMP_FILE ".tmp", PG_BINARY_W);
+    if (file == NULL)
+        goto error;
+
+    if (fwrite(&SSIFAIL_FILE_HEADER, sizeof(uint32), 1, file) != 1)
+        goto error;
+
+    if (fwrite(&(ssifails->occured_serialization_failures), sizeof(int64), 1, file) != 1)
+        goto error;
+
+    if (FreeFile(file))
+    {
+        file = NULL;
+        goto error;
+    }
+
+    if (rename(SSIFAIL_DUMP_FILE ".tmp", SSIFAIL_DUMP_FILE) != 0)
+        ereport(FATAL, (errcode_for_file_access(),
+                        errmsg("could not rename stat file \":%s\": %m",
+                               SSIFAIL_DUMP_FILE ".tmp")));
+    return;
+
+error:
+    ereport(LOG, (errcode_for_file_access(),
+                   errmsg("could not read file \"%s\": %m",
+                          SSIFAIL_DUMP_FILE)));
+    if (file)
+        FreeFile(file);
+    unlink(SSIFAIL_DUMP_FILE);
 }
 
 static Size
