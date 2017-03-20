@@ -134,21 +134,29 @@ ssifails_memsize(void)
     return size;
 }
 
+/*
+ * The following function accounts every serialization failures encountered.
+ * Serialization failures are accounted first, then other hooks are called.
+ */
 static void
 count_serialization_failures(ErrorData *edata)
 {
-    /* Call any previous hooks */
-    if (prev_emit_log_hook)
-        prev_emit_log_hook(edata);
-
     /* filter out serialization failures and increment counter */
     if (edata->sqlerrcode == ERRCODE_T_R_SERIALIZATION_FAILURE) {
         LWLockAcquire(ssifails->lock, LW_EXCLUSIVE);
         ssifails->occured_serialization_failures++;
         LWLockRelease(ssifails->lock);
     }
+
+    /* Call any previous hooks */
+    if (prev_emit_log_hook)
+        prev_emit_log_hook(edata);
 }
 
+/*
+ * The following function returns the number of serialization failures
+ * encountered.
+ */
 Datum
 pg_stat_ssi_failures(PG_FUNCTION_ARGS)
 {
