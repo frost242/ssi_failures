@@ -1,10 +1,16 @@
-# ssi_failures
+# pg_stat_ssi_failures
 
 Little extension to account serialization failures in PostgreSQL.
 
 The main purpose of this extension is to provide some counter that can return
 some kind of perfdata to a monitoring suite.
 
+## Functions
+
+  * `pg_stat_ssi_failures` : returns the number of serialization failures that
+     occurred in the cluster.
+
+  * `pg_stat_ssi_failures_reset` : reset the failure counter.
 
 ## How to monitor this counter ?
 
