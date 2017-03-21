@@ -46,6 +46,11 @@ static void ssifails_shmem_shutdown(int code, Datum arg);
 static void count_serialization_failures(ErrorData *edata);
 static Size ssifails_memsize(void);
 Datum pg_stat_ssi_failures(PG_FUNCTION_ARGS);
+Datum pg_stat_ssi_failures_reset(PG_FUNCTION_ARGS);
+
+PG_FUNCTION_INFO_V1(pg_stat_ssi_failures);
+PG_FUNCTION_INFO_V1(pg_stat_ssi_failures_reset);
+
 
 /* let's have some fun */
 void
@@ -251,5 +256,25 @@ pg_stat_ssi_failures(PG_FUNCTION_ARGS)
 
     PG_RETURN_INT64(count_res);
 }
+/*
+ * The following function returns the number of serialization failures
+ * encountered.
+ */
+Datum
+pg_stat_ssi_failures_reset(PG_FUNCTION_ARGS)
+{
+    if (!ssifails)
+        ereport(ERROR,
+	    (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+             errmsg("pg_stat_ssi_failures must be loaded via shared_preload_libraries")));
+
+    LWLockAcquire(ssifails->lock, LW_SHARED);
+    ssifails->occured_serialization_failures = 0;
+    LWLockRelease(ssifails->lock);
+
+    PG_RETURN_VOID();
+}
+
+
 
 /* eof */
